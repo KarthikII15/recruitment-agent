@@ -43,11 +43,24 @@ class TerraformRunner:
     def _prepare_workdir(self, deployment_id: int) -> str:
         workdir = os.path.join(self.base_dir, f"deploy_{deployment_id}")
 
-        # Clean any previous run
+        # Remove if exists
         if os.path.exists(workdir):
             shutil.rmtree(workdir)
 
-        shutil.copytree(self.base_dir, workdir, dirs_exist_ok=True)
+        # Copy only .tf files, NOT the entire folder
+        os.makedirs(workdir, exist_ok=True)
+
+        for file in os.listdir(self.base_dir):
+            fpath = os.path.join(self.base_dir, file)
+
+            # Skip any deploy_X folders
+            if os.path.isdir(fpath) and file.startswith("deploy_"):
+                continue
+
+            # Copy only Terraform files
+            if file.endswith(".tf") or file.endswith(".tf.json"):
+                shutil.copy2(fpath, workdir)
+
         return workdir
 
     # ---------------------------------------------

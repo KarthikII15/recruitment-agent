@@ -1,77 +1,63 @@
 terraform {
-  required_version = ">= 1.3.0"
+required_version = ">= 1.3.0"
 
-  required_providers {
-    google = {
-      source  = "hashicorp/google"
-      version = "~> 5.0"
-    }
-  }
+required_providers {
+google = {
+source  = "hashicorp/google"
+version = "~> 5.0"
+}
+}
 }
 
 locals {
-  effective_zone = var.zone != "" ? var.zone : "${var.region}-a"
+effective_zone = var.zone != "" ? var.zone : "${var.region}-a"
 }
 
 provider "google" {
-  project = var.project_id
-  region  = var.region
-  zone    = local.effective_zone
+project = var.project_id
+region  = var.region
+zone    = local.effective_zone
 }
 
 data "google_compute_image" "debian" {
-  family  = "debian-12"
-  project = "debian-cloud"
+family  = "debian-12"
+project = "debian-cloud"
 }
 
-# ------------------------------
-# NETWORK + FIREWALL
-# ------------------------------
-
 resource "google_compute_network" "default" {
-  name                    = "${var.name_prefix}-network"
-  auto_create_subnetworks = true
+name                    = "${var.name_prefix}-network"
+auto_create_subnetworks = true
 }
 
 resource "google_compute_firewall" "allow-http-ssh" {
-  name    = "${var.name_prefix}-fw"
-  network = google_compute_network.default.name
+name    = "${var.name_prefix}-fw"
+network = google_compute_network.default.name
 
-  allow {
-    protocol = "tcp"
-    ports    = ["22", "80", "8000"]
-  }
-
-  source_ranges = ["0.0.0.0/0"]
+allow {
+protocol = "tcp"
+ports    = ["22", "80", "8000"]
 }
 
-# ------------------------------
-# STARTUP SCRIPT
-# ------------------------------
-
-
-
-# ------------------------------
-# VM INSTANCE
-# ------------------------------
+source_ranges = ["0.0.0.0/0"]
+}
 
 resource "google_compute_instance" "vm" {
-  name         = "${var.name_prefix}-vm"
-  machine_type = var.machine_type
+name         = "${var.name_prefix}-vm"
+machine_type = var.machine_type
 
-  boot_disk {
-    initialize_params {
-      image = data.google_compute_image.debian.self_link
-      size  = 30
-    }
-  }
+boot_disk {
+initialize_params {
+image = data.google_compute_image.debian.self_link
+size  = 30
+}
+}
 
-  network_interface {
-    network = google_compute_network.default.name
-    access_config {}
-  }
+network_interface {
+network = google_compute_network.default.name
+access_config {}
+}
 
-  metadata_startup_script = <<EOF
+metadata_startup_script = <<EOF
 #!/bin/bash
 set -xe
 
@@ -101,5 +87,5 @@ sed -i 's/5173:80/80:80/g' docker-compose.yml
 docker compose up -d --build
 EOF
 
-  tags = ["http-server", "ssh-server"]
+tags = ["http-server", "ssh-server"]
 }
