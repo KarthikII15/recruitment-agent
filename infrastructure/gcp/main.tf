@@ -50,56 +50,39 @@ resource "google_compute_firewall" "allow-http-ssh" {
 # ------------------------------
 
 locals {
-  startup_script = <<-EOF
-    #!/bin/bash
-    set -xe
+  startup_script = <<EOF
+#!/bin/bash
+set -xe
 
-    # ============================
-    # Update & Install Essentials
-    # ============================
-    apt-get update -y
-    apt-get install -y ca-certificates curl gnupg git
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg git
 
-    # ============================
-    # Install Docker (Official Repo)
-    # ============================
-    install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/debian/gpg \
-      -o /etc/apt/keyrings/docker.asc
-    chmod a+r /etc/apt/keyrings/docker.asc
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
 
-    echo \
-      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
-      https://download.docker.com/linux/debian \
-      $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-      > /etc/apt/sources.list.d/docker.list
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+https://download.docker.com/linux/debian \
+$(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+> /etc/apt/sources.list.d/docker.list
 
-    apt-get update -y
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-    systemctl enable docker
-    systemctl start docker
+systemctl enable docker
+systemctl start docker
 
-    # ============================
-    # Clone App
-    # ============================
-    mkdir -p /opt/app
-    cd /opt/app
+mkdir -p /opt/app
+cd /opt/app
 
-    git clone -b ${var.app_branch} ${var.app_repo_url} src || (cd src && git pull)
-    cd src
+git clone -b main https://github.com/KarthikII15/recruitment-agent.git src || (cd src && git pull)
+cd src
 
-    # ============================
-    # Patch docker-compose.yml (5173 → 80)
-    # ============================
-    sed -i 's/5173:80/80:80/g' docker-compose.yml
+sed -i 's/5173:80/80:80/g' docker-compose.yml
 
-    # ============================
-    # Run App
-    # ============================
-    docker compose down || true
-    docker compose up -d --build
-  EOF
+docker compose up -d --build
+
+EOF
 }
 
 # ------------------------------
