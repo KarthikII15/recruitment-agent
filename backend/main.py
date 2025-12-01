@@ -13,7 +13,7 @@ import json
 import time
 import asyncio
 from jose import jwt, JWTError
-from terraform_runner import apply_for_deployment, destroy_for_deployment, TerraformError
+# from terraform_runner import apply_for_deployment, destroy_for_deployment, TerraformError
 from models import Deployment
 
 # Local Imports
@@ -26,13 +26,16 @@ import chat_service
 import auth
 import websocket_routes
 from store import active_autodrive_sessions
-from cloud_providers.factory import get_provider
+
 from fastapi import BackgroundTasks
 
 # Initialize Tables
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+
+from deploy_routes import router as deploy_router
+app.include_router(deploy_router)
 
 # --- CORS CONFIG ---
 origins = ["*"]  # Development mode
@@ -48,58 +51,63 @@ app.add_middleware(
 # app.include_router(websocket_routes.router)
 
 # --- AUTH SETUP ---
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+# from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
+# oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    credentials_exception = HTTPException(
-        status_code=401,
-        detail="Invalid authentication",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+def get_current_user(db: Session = Depends(get_db)):
+    # For now, return a dummy user or None to bypass auth
+    # In a real app, you'd check the token here
+    return None
 
-    try:
-        payload = jwt.decode(token, auth.SECRET_KEY, algorithms=[auth.ALGORITHM])
-        email = payload.get("sub")
-        if not email:
-            raise credentials_exception
-    except JWTError:
-    # silent authentication failure
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token expired or invalid. Please login again.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    # credentials_exception = HTTPException(
+    #     status_code=401,
+    #     detail="Invalid authentication",
+    #     headers={"WWW-Authenticate": "Bearer"},
+    # )
+
+    # try:
+    #     payload = jwt.decode(token, auth.SECRET_KEY, algorithms=[auth.ALGORITHM])
+    #     email = payload.get("sub")
+    #     if not email:
+    #         raise credentials_exception
+    # except JWTError:
+    # # silent authentication failure
+    #     raise HTTPException(
+    #         status_code=status.HTTP_401_UNAUTHORIZED,
+    #         detail="Token expired or invalid. Please login again.",
+    #         headers={"WWW-Authenticate": "Bearer"},
+    #     )
 
 
-    user = db.query(models.User).filter(models.User.email == email).first()
-    if not user:
-        raise credentials_exception
+    # user = db.query(models.User).filter(models.User.email == email).first()
+    # if not user:
+    #     raise credentials_exception
 
-    return user
+    # return user
 
 
 # --- AUTH ENDPOINTS ---
-@app.post("/register/")
-def register(email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    if db.query(models.User).filter(models.User.email == email).first():
-        raise HTTPException(status_code=400, detail="Email already exists")
+# @app.post("/register/")
+# def register(email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+#     if db.query(models.User).filter(models.User.email == email).first():
+#         raise HTTPException(status_code=400, detail="Email already exists")
 
-    new_user = models.User(email=email, hashed_password=auth.get_password_hash(password))
-    db.add(new_user)
-    db.commit()
-    return {"msg": "User registered"}
+#     new_user = models.User(email=email, hashed_password=auth.get_password_hash(password))
+#     db.add(new_user)
+#     db.commit()
+#     return {"msg": "User registered"}
 
 
-@app.post("/token")
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == form_data.username).first()
+# @app.post("/token")
+# def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+#     user = db.query(models.User).filter(models.User.email == form_data.username).first()
 
-    if not user or not auth.verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Invalid credentials")
+#     if not user or not auth.verify_password(form_data.password, user.hashed_password):
+#         raise HTTPException(status_code=400, detail="Invalid credentials")
 
-    token = auth.create_access_token({"sub": user.email})
-    return {"access_token": token, "token_type": "bearer"}
+#     token = auth.create_access_token({"sub": user.email})
+#     return {"access_token": token, "token_type": "bearer"}
 
 
 # --- STARTUP ---
@@ -522,44 +530,7 @@ class ChatRequest(BaseModel):
     context: Optional[ContextModel] = None
 
 
-class DeploymentRequest(BaseModel):
-    provider: str               # "aws" | "azure" | "gcp"
-    region: str
-    instance_type: Optional[str] = None
 
-    # Credentials or identifiers – for a first version you can use access keys.
-    # Later you should switch to safer mechanisms (OIDC, short-lived tokens, etc).
-    access_key_id: Optional[str] = None
-    secret_access_key: Optional[str] = None
-
-    # Azure-specific
-    subscription_id: Optional[str] = None
-    tenant_id: Optional[str] = None
-    client_id: Optional[str] = None
-    client_secret: Optional[str] = None
-
-    # GCP-specific (e.g. base64 of service account JSON)
-    service_account_json: Optional[str] = None
-
-    # optional: domain name the user wants
-    domain: Optional[str] = None
-
-
-class DeploymentResponse(BaseModel):
-    id: int
-    provider: str
-    status: str
-    app_url: Optional[str] = None
-    public_ip: Optional[str] = None
-    error_message: Optional[str] = None
-
-
-class DeploymentStatusResponse(BaseModel):
-    id: int
-    status: str
-    app_url: Optional[str] = None
-    public_ip: Optional[str] = None
-    error_message: Optional[str] = None
 
 
 @app.post("/chat/")
@@ -807,155 +778,5 @@ async def ws_autodrive(ws: WebSocket):
         db.close()
 
 
-# --- DEPLOYMENT ENDPOINTS ---
-
-@app.post("/deploy/start", response_model=DeploymentResponse)
-def start_deployment(
-    req: DeploymentRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
-    if req.provider.lower() != "aws":
-        # For now only AWS is implemented
-        raise HTTPException(status_code=400, detail="Only AWS deployments are implemented currently")
-
-    # Create DB record
-    deployment = Deployment(
-        user_id=current_user.id if current_user else None,
-        provider=req.provider.lower(),
-        region=req.region,
-        instance_type=req.instance_type or "t3.medium",
-        status="pending",
-        config=req.dict(),
-    )
-    db.add(deployment)
-    db.commit()
-    db.refresh(deployment)
-
-    def run_provisioning(dep_id: int):
-        from database import SessionLocal
-
-        session = SessionLocal()
-        try:
-            dep = session.query(Deployment).get(dep_id)
-            dep.status = "provisioning"
-            session.commit()
-
-            outputs = apply_for_deployment(dep)
-
-            # Terraform outputs look like: { "instance_public_ip": {"value": "..."}, ... }
-            public_ip = outputs.get("instance_public_ip", {}).get("value")
-            app_url = outputs.get("app_url", {}).get("value")
-            instance_id = outputs.get("instance_id", {}).get("value")
-
-            dep.vm_id = instance_id
-            dep.public_ip = public_ip
-            dep.app_url = app_url
-            dep.status = "running"
-            session.commit()
-        except TerraformError as te:
-            dep = session.query(Deployment).get(dep_id)
-            dep.status = "error"
-            dep.error_message = str(te)
-            session.commit()
-        except Exception as e:
-            import traceback
-            dep = session.query(Deployment).get(dep_id)
-            dep.status = "error"
-            dep.error_message = f"{e}\n{traceback.format_exc()}"
-            session.commit()
-        finally:
-            session.close()
-
-    background_tasks.add_task(run_provisioning, deployment.id)
-
-    return DeploymentResponse(
-        id=deployment.id,
-        provider=deployment.provider,
-        status=deployment.status,
-        app_url=deployment.app_url,
-        public_ip=deployment.public_ip,
-        error_message=deployment.error_message,
-    )
 
 
-@app.get("/deploy/{deployment_id}/status", response_model=DeploymentStatusResponse)
-def get_deployment_status(
-    deployment_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
-    dep = db.query(Deployment).filter(Deployment.id == deployment_id).first()
-    if not dep:
-        raise HTTPException(status_code=404, detail="Deployment not found")
-
-    # Optional: ensure user owns it
-    # if dep.user_id != current_user.id and current_user.role != "admin":
-    #     raise HTTPException(status_code=403, detail="Not allowed")
-
-    return DeploymentStatusResponse(
-        id=dep.id,
-        status=dep.status,
-        app_url=dep.app_url,
-        public_ip=dep.public_ip,
-        error_message=dep.error_message,
-    )
-
-
-class UndeployRequest(BaseModel):
-    deployment_id: int
-
-
-@app.post("/deploy/undeploy", response_model=DeploymentStatusResponse)
-def undeploy(
-    req: UndeployRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
-    dep = db.query(Deployment).filter(Deployment.id == req.deployment_id).first()
-    if not dep:
-        raise HTTPException(status_code=404, detail="Deployment not found")
-
-    # Optional ownership check here
-
-    if dep.status not in ("running", "error"):
-        raise HTTPException(
-            status_code=400, detail=f"Cannot undeploy in status {dep.status}"
-        )
-
-    dep.status = "destroying"
-    db.commit()
-
-    def run_destroy(dep_id: int):
-        from database import SessionLocal
-
-        session = SessionLocal()
-        try:
-            dep = session.query(Deployment).get(dep_id)
-            destroy_for_deployment(dep)
-            dep.status = "destroyed"
-            session.commit()
-        except TerraformError as te:
-            dep = session.query(Deployment).get(dep_id)
-            dep.status = "error"
-            dep.error_message = str(te)
-            session.commit()
-        except Exception as e:
-            dep = session.query(Deployment).get(dep_id)
-            dep.status = "error"
-            dep.error_message = str(e)
-            session.commit()
-        finally:
-            session.close()
-
-    background_tasks.add_task(run_destroy, dep.id)
-
-    return DeploymentStatusResponse(
-        id=dep.id,
-        status=dep.status,
-        app_url=dep.app_url,
-        public_ip=dep.public_ip,
-        error_message=dep.error_message,
-    )

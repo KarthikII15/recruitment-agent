@@ -36,9 +36,9 @@ function App() {
     setToken(null);
   };
 
-  if (!token) {
-    return <LoginPage onLogin={handleLogin} />;
-  }
+  // if (!token) {
+  //   return <LoginPage onLogin={handleLogin} />;
+  // }
 
   return (
     <DashboardProvider>

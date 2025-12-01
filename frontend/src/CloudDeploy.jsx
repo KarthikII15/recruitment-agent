@@ -3,11 +3,11 @@ import api from "./api/client";
 import { Cloud, Loader, CheckCircle, XCircle } from "lucide-react";
 
 const CloudDeploy = () => {
-  const [provider, setProvider] = useState("aws");
-  const [region, setRegion] = useState("us-east-1");
-  const [instanceType, setInstanceType] = useState("t3.medium");
-  const [accessKeyId, setAccessKeyId] = useState("");
-  const [secretAccessKey, setSecretAccessKey] = useState("");
+  const [provider] = useState("gcp");
+  const [region, setRegion] = useState("us-central1");
+  const [projectId, setProjectId] = useState("");
+  const [serviceAccountJson, setServiceAccountJson] = useState("");
+  const [machineType, setMachineType] = useState("e2-medium");
 
   const [deploymentId, setDeploymentId] = useState(null);
   const [status, setStatus] = useState(null);
@@ -23,9 +23,9 @@ const CloudDeploy = () => {
       const payload = {
         provider,
         region,
-        instance_type: instanceType,
-        access_key_id: accessKeyId || undefined,
-        secret_access_key: secretAccessKey || undefined,
+        project_id: projectId,
+        service_account_json: serviceAccountJson,
+        machine_type: machineType,
       };
       const res = await api.post("/deploy/start", payload);
       setDeploymentId(res.data.id);
@@ -77,11 +77,11 @@ const CloudDeploy = () => {
   return (
     <div style={{ maxWidth: 700, margin: "0 auto" }}>
       <h2 style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <Cloud size={24} /> Cloud Deployment
+        <Cloud size={24} /> Cloud Deployment (GCP)
       </h2>
       <p style={{ color: "#64748b" }}>
-        Choose a cloud provider, enter credentials, and let the system create a VM,
-        deploy the Recruitment Agent, and give you the access URL.
+        Deploy the Recruitment Agent to your GCP project. We will create a VM in{" "}
+        <code>us-central1</code>, clone your GitHub repo, and run docker-compose.
       </p>
 
       <div
@@ -93,41 +93,6 @@ const CloudDeploy = () => {
           background: "#fff",
         }}
       >
-        {/* Provider selection */}
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ fontWeight: 600, display: "block", marginBottom: 8 }}>
-            Cloud Provider
-          </label>
-          <div style={{ display: "flex", gap: 8 }}>
-            {["aws", "azure", "gcp"].map((p) => (
-              <button
-                key={p}
-                onClick={() => setProvider(p)}
-                disabled={p !== "aws"} // disable non-implemented providers
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 999,
-                  border:
-                    provider === p ? "1px solid #3b82f6" : "1px solid #cbd5f5",
-                  background:
-                    provider === p ? "#eff6ff" : "#f8fafc",
-                  cursor: p === "aws" ? "pointer" : "not-allowed",
-                  textTransform: "uppercase",
-                  fontSize: 12,
-                  letterSpacing: 0.5,
-                  opacity: p === "aws" ? 1 : 0.4,
-                }}
-              >
-                {p}
-              </button>
-            ))}
-          </div>
-          <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 8 }}>
-            Currently, only AWS deployment is supported. Azure & GCP coming soon.
-          </p>
-        </div>
-
-        {/* Basic config */}
         <div
           style={{
             display: "grid",
@@ -143,47 +108,62 @@ const CloudDeploy = () => {
             <input
               value={region}
               onChange={(e) => setRegion(e.target.value)}
-              placeholder="us-east-1"
+              placeholder="us-central1"
               style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #e2e8f0" }}
             />
           </div>
           <div>
             <label style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>
-              Instance Type
+              Machine Type
             </label>
             <input
-              value={instanceType}
-              onChange={(e) => setInstanceType(e.target.value)}
-              placeholder="t3.medium"
+              value={machineType}
+              onChange={(e) => setMachineType(e.target.value)}
+              placeholder="e2-medium"
               style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #e2e8f0" }}
             />
           </div>
         </div>
 
-        {/* AWS creds (for now) */}
-        {provider === "aws" && (
-          <div style={{ marginBottom: 16 }}>
-            <p style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
-              Provide an IAM user with limited EC2 permissions. Store safely; don’t reuse
-              root credentials.
-            </p>
-            <div style={{ display: "grid", gap: 8 }}>
-              <input
-                value={accessKeyId}
-                onChange={(e) => setAccessKeyId(e.target.value)}
-                placeholder="AWS Access Key ID"
-                style={{ padding: 8, borderRadius: 8, border: "1px solid #e2e8f0" }}
-              />
-              <input
-                type="password"
-                value={secretAccessKey}
-                onChange={(e) => setSecretAccessKey(e.target.value)}
-                placeholder="AWS Secret Access Key"
-                style={{ padding: 8, borderRadius: 8, border: "1px solid #e2e8f0" }}
-              />
-            </div>
-          </div>
-        )}
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>
+            GCP Project ID
+          </label>
+          <input
+            value={projectId}
+            onChange={(e) => setProjectId(e.target.value)}
+            placeholder="your-gcp-project-id"
+            style={{
+              width: "100%",
+              padding: 8,
+              borderRadius: 8,
+              border: "1px solid #e2e8f0",
+            }}
+          />
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>
+            Service Account JSON
+          </label>
+          <textarea
+            value={serviceAccountJson}
+            onChange={(e) => setServiceAccountJson(e.target.value)}
+            placeholder="Paste the full service account JSON here"
+            rows={6}
+            style={{
+              width: "100%",
+              padding: 8,
+              borderRadius: 8,
+              border: "1px solid #e2e8f0",
+              fontFamily: "monospace",
+              fontSize: 12,
+            }}
+          />
+          <p style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+            This is used only to create/destroy the VM in your project.
+          </p>
+        </div>
 
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
           <button
@@ -201,7 +181,7 @@ const CloudDeploy = () => {
               cursor: "pointer",
             }}
           >
-            {loading ? <Loader size={16} className="spin" /> : null}
+            {loading && <Loader size={16} className="spin" />}
             Deploy
           </button>
 
@@ -236,7 +216,6 @@ const CloudDeploy = () => {
         </div>
       </div>
 
-      {/* Status */}
       {status && (
         <div
           style={{

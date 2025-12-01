@@ -1,162 +1,113 @@
-import os
 import json
-import shutil
 import subprocess
-from pathlib import Path
+import os
+import shutil
 from typing import Dict, Any
 
+from sqlalchemy.orm import Session
 from models import Deployment
-
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-INFRA_DIR = BASE_DIR / "infrastructure"
 
 
 class TerraformError(Exception):
     pass
 
 
-def _run(cmd, cwd: Path, env: Dict[str, str]) -> str:
-    """Run a shell command and return stdout, raise on error."""
-    proc = subprocess.run(
-        cmd,
-        cwd=str(cwd),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if proc.returncode != 0:
-        raise TerraformError(f"Command {' '.join(cmd)} failed:\n{proc.stdout}\n{proc.stderr}")
-    return proc.stdout
+class TerraformRunner:
+    def __init__(self):
+        self.base_dir = os.path.join(os.getcwd(), "infrastructure", "gcp")
 
+    # ---------------------------------------------
+    # Run shell command safely and capture output
+    # ---------------------------------------------
+    def _run_cmd(self, cmd: list, cwd: str):
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=cwd,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            return result.stdout
+        except subprocess.CalledProcessError as e:
+            raise TerraformError(
+                f"Command {' '.join(cmd)} failed:\n{e.stdout}\n{e.stderr}"
+            )
 
-def _prepare_workdir(deployment: Deployment) -> Path:
-    """
-    Copy the base infra for the provider into a per-deployment working directory.
-    e.g. infrastructure/aws -> infrastructure/aws/deploy_1
-    """
-    provider_dir = INFRA_DIR / deployment.provider
-    if not provider_dir.is_dir():
-        raise TerraformError(f"Infrastructure folder not found for provider: {deployment.provider}")
+    # ---------------------------------------------
+    # Prepare deployment-specific TF working folder
+    # ---------------------------------------------
+    def _prepare_workdir(self, deployment_id: int) -> str:
+        workdir = os.path.join(self.base_dir, f"deploy_{deployment_id}")
 
-    work_dir = provider_dir / f"deploy_{deployment.id}"
+        # Clean any previous run
+        if os.path.exists(workdir):
+            shutil.rmtree(workdir)
 
-    # Copy template files
-    if work_dir.exists():
-        shutil.rmtree(work_dir)
-    shutil.copytree(provider_dir, work_dir)
+        shutil.copytree(self.base_dir, workdir, dirs_exist_ok=True)
+        return workdir
 
-    return work_dir
+    # ---------------------------------------------
+    # Apply Terraform
+    # ---------------------------------------------
+    def apply_for_deployment(self, dep: Deployment, db: Session) -> Dict[str, Any]:
+        deployment_id = dep.id
 
+        workdir = self._prepare_workdir(deployment_id)
 
-def _write_tfvars(work_dir: Path, deployment: Deployment) -> None:
-    """
-    Write terraform.tfvars.json for this deployment based on deployment.config.
-    """
-    cfg = deployment.config or {}
+        # ----- Prepare tfvars -----
+        config = dep.config or {}
 
-    tfvars: Dict[str, Any] = {}
+        tfvars = {
+            "project_id": config.get("project_id"),
+            "region": config.get("region", "us-central1"),
+            "zone": config.get("zone") or f"{config.get('region', 'us-central1')}-a",
+            "name_prefix": f"ra-{deployment_id}",
+            "machine_type": config.get("machine_type", "e2-medium"),
+            "app_repo_url": config.get(
+                "app_repo_url",
+                "https://github.com/KarthikII15/recruitment-agent.git",
+            ),
+            "app_branch": config.get("app_branch", "main"),
+        }
 
-    if deployment.provider == "aws":
-        tfvars["region"] = cfg.get("region", "us-east-1")
-        tfvars["instance_type"] = cfg.get("instance_type", "t3.medium")
-        tfvars["name_prefix"] = f"ra-{deployment.id}"
+        with open(os.path.join(workdir, "terraform.tfvars.json"), "w") as f:
+            json.dump(tfvars, f, indent=2)
 
-        # where is your repo?
-        tfvars["app_repo_url"] = cfg.get(
-            "app_repo_url",
-            "https://github.com/KarthikII15/recruitment-agent.git",
+        # ----- Run Terraform -----
+        self._run_cmd(["terraform", "init"], cwd=workdir)
+        self._run_cmd(
+            ["terraform", "apply", "-auto-approve", "-input=false"], cwd=workdir
         )
-        tfvars["app_branch"] = cfg.get("app_branch", "main")
-        tfvars["docker_compose_path"] = cfg.get("docker_compose_path", ".")
 
-        # environment variables passed to .env
-        tfvars["app_env"] = cfg.get("app_env", {})
+        # ----- Read Outputs -----
+        output_raw = self._run_cmd(["terraform", "output", "-json"], cwd=workdir)
+        outputs = json.loads(output_raw)
 
-    elif deployment.provider == "gcp":
-        tfvars["project_id"] = cfg.get("project_id")
-        # normalize region to lowercase
-        region = cfg.get("region", "us-central1").lower()
-        tfvars["region"] = region
-        tfvars["zone"] = cfg.get("zone") or f"{region}-a"
-        tfvars["machine_type"] = cfg.get("machine_type", "e2-medium")
-        tfvars["name_prefix"] = f"ra-{deployment.id}"
+        instance_ip = outputs["instance_public_ip"]["value"]
+        app_url = outputs["app_url"]["value"]
 
-        tfvars["app_repo_url"] = cfg.get(
-            "app_repo_url",
-            "https://github.com/KarthikII15/recruitment-agent.git",
-        )
-        tfvars["app_branch"] = cfg.get("app_branch", "main")
-        tfvars["docker_compose_path"] = cfg.get("docker_compose_path", ".")
-        tfvars["app_env"] = cfg.get("app_env", {})
+        return {
+            "public_ip": instance_ip,
+            "app_url": app_url,
+            "raw_outputs": outputs,
+        }
 
-    (work_dir / "terraform.tfvars.json").write_text(json.dumps(tfvars, indent=2))
+    # ---------------------------------------------
+    # Destroy Deployment
+    # ---------------------------------------------
+    def destroy_for_deployment(self, dep: Deployment):
+        deployment_id = dep.id
+        workdir = os.path.join(self.base_dir, f"deploy_{deployment_id}")
 
+        if not os.path.exists(workdir):
+            return False
 
-def _env_for_deployment(deployment: Deployment) -> Dict[str, str]:
-    """
-    Prepare environment variables for terraform (credentials, etc).
-    """
-    env = os.environ.copy()
-    cfg = deployment.config or {}
-
-    if deployment.provider == "aws":
-        # Provide AWS credentials via env vars
-        if "access_key_id" in cfg and "secret_access_key" in cfg:
-            env["AWS_ACCESS_KEY_ID"] = cfg["access_key_id"]
-            env["AWS_SECRET_ACCESS_KEY"] = cfg["secret_access_key"]
-        if "region" in cfg:
-            env["AWS_DEFAULT_REGION"] = cfg["region"]
-
-    elif deployment.provider == "gcp":
-        # write the service account JSON into the workdir and point GOOGLE_APPLICATION_CREDENTIALS at it
-        work_dir = INFRA_DIR / deployment.provider / f"deploy_{deployment.id}"
-        sa_json = cfg.get("service_account_json")
-        if sa_json:
-            sa_path = work_dir / "gcp-sa.json"
-            sa_path.write_text(sa_json)
-            env["GOOGLE_APPLICATION_CREDENTIALS"] = str(sa_path)
-
-    # Azure later...
-
-    return env
-
-
-def apply_for_deployment(deployment: Deployment) -> Dict[str, Any]:
-    """
-    Run 'terraform init' + 'terraform apply' for a deployment.
-    Returns Terraform outputs as a dict.
-    """
-    work_dir = _prepare_workdir(deployment)
-    _write_tfvars(work_dir, deployment)
-    env = _env_for_deployment(deployment)
-
-    # init
-    _run(["terraform", "init", "-input=false"], cwd=work_dir, env=env)
-
-    # apply
-    _run(["terraform", "apply", "-auto-approve", "-input=false"], cwd=work_dir, env=env)
-
-    # outputs
-    out_json = _run(["terraform", "output", "-json"], cwd=work_dir, env=env)
-    outputs = json.loads(out_json)
-    return outputs
-
-
-def destroy_for_deployment(deployment: Deployment) -> None:
-    """
-    Run 'terraform destroy' for a deployment.
-    """
-    provider_dir = INFRA_DIR / deployment.provider
-    work_dir = provider_dir / f"deploy_{deployment.id}"
-    if not work_dir.exists():
-        # nothing to destroy
-        return
-
-    env = _env_for_deployment(deployment)
-    _run(["terraform", "init", "-input=false"], cwd=work_dir, env=env)
-    _run(["terraform", "destroy", "-auto-approve", "-input=false"], cwd=work_dir, env=env)
-
-    # optional: cleanup
-    shutil.rmtree(work_dir, ignore_errors=True)
+        try:
+            self._run_cmd(["terraform", "destroy", "-auto-approve"], cwd=workdir)
+            shutil.rmtree(workdir)
+            return True
+        except TerraformError as e:
+            print("Destroy error:", str(e))
+            return False
