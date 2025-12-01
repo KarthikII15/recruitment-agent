@@ -14,7 +14,9 @@ class TerraformError(Exception):
 
 class TerraformRunner:
     def __init__(self):
-        self.base_dir = os.path.join(os.getcwd(), "infrastructure", "gcp")
+        # Move OUT of backend/ folder → go to project root
+        project_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+        self.base_dir = os.path.join(project_root, "infrastructure", "gcp")
 
     # ---------------------------------------------
     # Run shell command safely and capture output
