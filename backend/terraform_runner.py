@@ -56,7 +56,7 @@ def _write_tfvars(work_dir: Path, deployment: Deployment) -> None:
     """
     cfg = deployment.config or {}
 
-    tfvars = {}
+    tfvars: Dict[str, Any] = {}
 
     if deployment.provider == "aws":
         tfvars["region"] = cfg.get("region", "us-east-1")
@@ -66,7 +66,7 @@ def _write_tfvars(work_dir: Path, deployment: Deployment) -> None:
         # where is your repo?
         tfvars["app_repo_url"] = cfg.get(
             "app_repo_url",
-            "https://github.com/your-org/recruitment-agent-v2.git",  # TODO: replace with your actual repo
+            "https://github.com/KarthikII15/recruitment-agent.git",
         )
         tfvars["app_branch"] = cfg.get("app_branch", "main")
         tfvars["docker_compose_path"] = cfg.get("docker_compose_path", ".")
@@ -74,7 +74,22 @@ def _write_tfvars(work_dir: Path, deployment: Deployment) -> None:
         # environment variables passed to .env
         tfvars["app_env"] = cfg.get("app_env", {})
 
-    # Azure / GCP can be added here later
+    elif deployment.provider == "gcp":
+        tfvars["project_id"] = cfg.get("project_id")
+        # normalize region to lowercase
+        region = cfg.get("region", "us-central1").lower()
+        tfvars["region"] = region
+        tfvars["zone"] = cfg.get("zone") or f"{region}-a"
+        tfvars["machine_type"] = cfg.get("machine_type", "e2-medium")
+        tfvars["name_prefix"] = f"ra-{deployment.id}"
+
+        tfvars["app_repo_url"] = cfg.get(
+            "app_repo_url",
+            "https://github.com/KarthikII15/recruitment-agent.git",
+        )
+        tfvars["app_branch"] = cfg.get("app_branch", "main")
+        tfvars["docker_compose_path"] = cfg.get("docker_compose_path", ".")
+        tfvars["app_env"] = cfg.get("app_env", {})
 
     (work_dir / "terraform.tfvars.json").write_text(json.dumps(tfvars, indent=2))
 
@@ -94,7 +109,16 @@ def _env_for_deployment(deployment: Deployment) -> Dict[str, str]:
         if "region" in cfg:
             env["AWS_DEFAULT_REGION"] = cfg["region"]
 
-    # Azure/GCP creds can be added later
+    elif deployment.provider == "gcp":
+        # write the service account JSON into the workdir and point GOOGLE_APPLICATION_CREDENTIALS at it
+        work_dir = INFRA_DIR / deployment.provider / f"deploy_{deployment.id}"
+        sa_json = cfg.get("service_account_json")
+        if sa_json:
+            sa_path = work_dir / "gcp-sa.json"
+            sa_path.write_text(sa_json)
+            env["GOOGLE_APPLICATION_CREDENTIALS"] = str(sa_path)
+
+    # Azure later...
 
     return env
 
