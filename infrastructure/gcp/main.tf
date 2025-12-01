@@ -49,41 +49,7 @@ resource "google_compute_firewall" "allow-http-ssh" {
 # STARTUP SCRIPT
 # ------------------------------
 
-locals {
-  startup_script = <<EOF
-#!/bin/bash
-set -xe
 
-apt-get update -y
-apt-get install -y ca-certificates curl gnupg git
-
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
-chmod a+r /etc/apt/keyrings/docker.asc
-
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
-https://download.docker.com/linux/debian \
-$(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-> /etc/apt/sources.list.d/docker.list
-
-apt-get update -y
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-
-systemctl enable docker
-systemctl start docker
-
-mkdir -p /opt/app
-cd /opt/app
-
-git clone -b main https://github.com/KarthikII15/recruitment-agent.git src || (cd src && git pull)
-cd src
-
-sed -i 's/5173:80/80:80/g' docker-compose.yml
-
-docker compose up -d --build
-
-EOF
-}
 
 # ------------------------------
 # VM INSTANCE
@@ -102,13 +68,38 @@ resource "google_compute_instance" "vm" {
 
   network_interface {
     network = google_compute_network.default.name
-
     access_config {}
   }
 
-  metadata = {
-    startup-script = local.startup_script
-  }
+  metadata_startup_script = <<EOF
+#!/bin/bash
+set -xe
+
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg git
+
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+systemctl enable docker
+systemctl start docker
+
+mkdir -p /opt/app
+cd /opt/app
+
+git clone -b main https://github.com/KarthikII15/recruitment-agent.git src || (cd src && git pull)
+cd src
+
+sed -i 's/5173:80/80:80/g' docker-compose.yml
+
+docker compose up -d --build
+EOF
 
   tags = ["http-server", "ssh-server"]
 }
